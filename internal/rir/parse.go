@@ -94,15 +94,17 @@ func ipv4RangeToCIDRs(start, value, cc string) []Record {
 	cur := startU
 
 	for cur <= endU {
+		// Find the largest block that is aligned and fits
 		prefix := 32
 		for prefix > 0 {
-			block := uint32(1) << (32 - prefix)
-			// Must be aligned and must fit inside [cur, endU]
-			if cur%block != 0 || cur+block-1 > endU {
-				prefix--
-				continue
+			testPrefix := prefix - 1
+			block := uint32(1) << (32 - testPrefix)
+			// Check if we can use a larger block (smaller prefix)
+			if cur%block == 0 && cur+block-1 <= endU {
+				prefix = testPrefix
+			} else {
+				break
 			}
-			break
 		}
 
 		out = append(out, Record{
