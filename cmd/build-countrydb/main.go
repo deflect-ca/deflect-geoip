@@ -66,7 +66,7 @@ func main() {
 }
 
 func build() ([]rir.Record, []string) {
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: 5 * time.Minute}
 	var all []rir.Record
 	var src []string
 
