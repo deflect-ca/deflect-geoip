@@ -71,11 +71,8 @@ func build() ([]rir.Record, []string) {
 	var src []string
 
 	for name, url := range rir.Sources {
-		resp, err := client.Get(url)
-		must(err)
-		recs, err := rir.ParseDelegatedExtended(resp.Body)
-		resp.Body.Close()
-		must(err)
+		fmt.Printf("Fetching %s...\n", name)
+		recs := fetchWithRetry(client, name, url)
 		all = append(all, recs...)
 		src = append(src, name+"-delegated")
 	}
@@ -125,4 +122,37 @@ func must(err error) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func fetchWithRetry(client *http.Client, name, url string) []rir.Record {
+	const maxRetries = 3
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		req, err := http.NewRequest("GET", url, nil)
+		must(err)
+		req.Header.Set("User-Agent", "deflect-geoip/1.0 (https://github.com/equalitie/deflect-geoip)")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			fmt.Printf("  Attempt %d failed: %v\n", attempt, err)
+			time.Sleep(time.Duration(attempt*5) * time.Second)
+			continue
+		}
+
+		recs, err := rir.ParseDelegatedExtended(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			fmt.Printf("  Attempt %d parse failed: %v\n", attempt, err)
+			time.Sleep(time.Duration(attempt*5) * time.Second)
+			continue
+		}
+
+		fmt.Printf("  Got %d records\n", len(recs))
+		return recs
+	}
+
+	panic(fmt.Sprintf("failed to fetch %s after %d attempts: %v", name, maxRetries, lastErr))
 }
