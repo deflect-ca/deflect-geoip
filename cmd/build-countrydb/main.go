@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -125,28 +126,39 @@ func must(err error) {
 }
 
 func fetchWithRetry(client *http.Client, name, url string) []rir.Record {
-	const maxRetries = 3
+	const maxRetries = 5
 	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		req, err := http.NewRequest("GET", url, nil)
 		must(err)
 		req.Header.Set("User-Agent", "deflect-geoip/1.0 (https://github.com/equalitie/deflect-geoip)")
+		req.Header.Set("Accept", "*/*")
+		req.Header.Set("Connection", "keep-alive")
 
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err
-			fmt.Printf("  Attempt %d failed: %v\n", attempt, err)
-			time.Sleep(time.Duration(attempt*5) * time.Second)
+			fmt.Printf("  Attempt %d connect failed: %v\n", attempt, err)
+			time.Sleep(time.Duration(attempt*10) * time.Second)
 			continue
 		}
 
-		recs, err := rir.ParseDelegatedExtended(resp.Body)
+		// Download entire body first to avoid connection reset during streaming parse
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
 			lastErr = err
+			fmt.Printf("  Attempt %d download failed: %v\n", attempt, err)
+			time.Sleep(time.Duration(attempt*10) * time.Second)
+			continue
+		}
+		fmt.Printf("  Downloaded %d bytes\n", len(body))
+
+		recs, err := rir.ParseDelegatedExtended(bytes.NewReader(body))
+		if err != nil {
+			lastErr = err
 			fmt.Printf("  Attempt %d parse failed: %v\n", attempt, err)
-			time.Sleep(time.Duration(attempt*5) * time.Second)
 			continue
 		}
 
