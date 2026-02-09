@@ -1,0 +1,20 @@
+{
+  "name": "deflect-geoip-country",
+  "version": "2026-02-09",
+  "generated_at": "2026-02-09T05:14:00.082475602Z",
+  "sources": [
+    "afrinic-delegated",
+    "apnic-delegated",
+    "arin-delegated",
+    "lacnic-delegated",
+    "ripe-delegated"
+  ],
+  "artifacts": [
+    {
+      "type": "countrydb.csv.gz",
+      "path": "releases/2026-02-09/countrydb.csv.gz",
+      "sha256": "7eeb926faf07b6828cb376b72b1deb244ad95932c0478cfcf818f9212d3f8da2",
+      "bytes": 1117640
+    }
+  ]
+}
