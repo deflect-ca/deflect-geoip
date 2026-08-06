@@ -6,9 +6,7 @@ on:
     - cron: "17 3 * * 1"
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: build-geoip
@@ -28,8 +26,10 @@ jobs:
         run: |
           VERSION="$(date -u +%F)"
           go run ./cmd/build-countrydb --out dist --version "$VERSION"
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - name: Publish to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: dist
-      - uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: dist
+          force_orphan: true
