@@ -15,8 +15,11 @@ import (
 	"sort"
 	"time"
 
+	"github.com/equalitie/deflect-geoip/internal/asn"
 	"github.com/equalitie/deflect-geoip/internal/rir"
 )
+
+const ipToASNURL = "https://iptoasn.com/data/ip2asn-combined.tsv.gz"
 
 type Latest struct {
 	Name        string     `json:"name"`
@@ -38,42 +41,61 @@ func main() {
 	version := flag.String("version", time.Now().UTC().Format("2006-01-02"), "version")
 	flag.Parse()
 
-	recs, sources := build()
-	sort.Slice(recs, func(i, j int) bool { return recs[i].Prefix < recs[j].Prefix })
+	client := &http.Client{Timeout: 5 * time.Minute}
+
+	// --- countrydb ---
+	countryRecs, sources := buildCountry(client)
+	sort.Slice(countryRecs, func(i, j int) bool { return countryRecs[i].Prefix < countryRecs[j].Prefix })
 
 	releaseDir := filepath.Join(*out, "releases", *version)
 	must(os.MkdirAll(releaseDir, 0o755))
 
-	gz := filepath.Join(releaseDir, "countrydb.csv.gz")
-	bytes, sha := writeCSVGZ(gz, recs)
+	countryGZ := filepath.Join(releaseDir, "countrydb.csv.gz")
+	countryBytes, countrySHA := writeCountryCSVGZ(countryGZ, countryRecs)
+	must(os.WriteFile(countryGZ+".sha256", []byte(fmt.Sprintf("%s  countrydb.csv.gz\n", countrySHA)), 0o644))
 
-	must(os.WriteFile(gz+".sha256", []byte(fmt.Sprintf("%s  countrydb.csv.gz\n", sha)), 0o644))
+	// --- asndb ---
+	asnRecs := buildASN(client)
 
+	asnGZ := filepath.Join(releaseDir, "asndb.csv.gz")
+	asnBytes, asnSHA := writeASNCSVGZ(asnGZ, asnRecs)
+	must(os.WriteFile(asnGZ+".sha256", []byte(fmt.Sprintf("%s  asndb.csv.gz\n", asnSHA)), 0o644))
+
+	// --- latest.json ---
 	latest := Latest{
-		Name:        "deflect-geoip-country",
+		Name:        "deflect-geoip",
 		Version:     *version,
 		GeneratedAt: time.Now().UTC(),
-		Sources:     sources,
-		Artifacts: []Artifact{{
-			Type:   "countrydb.csv.gz",
-			Path:   fmt.Sprintf("releases/%s/countrydb.csv.gz", *version),
-			Sha256: sha,
-			Bytes:  bytes,
-		}},
+		Sources:     append(sources, "iptoasn"),
+		Artifacts: []Artifact{
+			{
+				Type:   "countrydb.csv.gz",
+				Path:   fmt.Sprintf("releases/%s/countrydb.csv.gz", *version),
+				Sha256: countrySHA,
+				Bytes:  countryBytes,
+			},
+			{
+				Type:   "asndb.csv.gz",
+				Path:   fmt.Sprintf("releases/%s/asndb.csv.gz", *version),
+				Sha256: asnSHA,
+				Bytes:  asnBytes,
+			},
+		},
 	}
 
 	must(os.MkdirAll(filepath.Join(*out, "releases"), 0o755))
 	writeJSON(filepath.Join(*out, "releases", "latest.json"), latest)
+
+	fmt.Printf("Done. countrydb: %d records, asndb: %d records\n", len(countryRecs), len(asnRecs))
 }
 
-func build() ([]rir.Record, []string) {
-	client := &http.Client{Timeout: 5 * time.Minute}
+func buildCountry(client *http.Client) ([]rir.Record, []string) {
 	var all []rir.Record
 	var src []string
 
 	for name, url := range rir.Sources {
 		fmt.Printf("Fetching %s...\n", name)
-		recs := fetchWithRetry(client, name, url)
+		recs := fetchRIRWithRetry(client, name, url)
 		all = append(all, recs...)
 		src = append(src, name+"-delegated")
 	}
@@ -93,7 +115,25 @@ func build() ([]rir.Record, []string) {
 	return out, src
 }
 
-func writeCSVGZ(path string, records []rir.Record) (int64, string) {
+func buildASN(client *http.Client) []asn.Record {
+	fmt.Printf("Fetching iptoasn combined...\n")
+
+	resp, err := client.Get(ipToASNURL)
+	must(err)
+	defer resp.Body.Close()
+
+	gr, err := gzip.NewReader(resp.Body)
+	must(err)
+	defer gr.Close()
+
+	recs, err := asn.ParseIPToASN(gr)
+	must(err)
+
+	fmt.Printf("  Got %d ASN records\n", len(recs))
+	return recs
+}
+
+func writeCountryCSVGZ(path string, records []rir.Record) (int64, string) {
 	f, err := os.Create(path)
 	must(err)
 	defer f.Close()
@@ -105,6 +145,27 @@ func writeCSVGZ(path string, records []rir.Record) (int64, string) {
 	_, _ = gw.Write([]byte("prefix,country\n"))
 	for _, r := range records {
 		_, _ = gw.Write([]byte(r.Prefix + "," + r.Country + "\n"))
+	}
+	must(gw.Close())
+
+	st, err := os.Stat(path)
+	must(err)
+	return st.Size(), hex.EncodeToString(h.Sum(nil))
+}
+
+func writeASNCSVGZ(path string, records []asn.Record) (int64, string) {
+	f, err := os.Create(path)
+	must(err)
+	defer f.Close()
+
+	h := sha256.New()
+	mw := io.MultiWriter(f, h)
+	gw := gzip.NewWriter(mw)
+
+	_, _ = gw.Write([]byte("range_start,range_end,asn,org\n"))
+	for _, r := range records {
+		line := fmt.Sprintf("%s,%s,%d,%s\n", r.RangeStart, r.RangeEnd, r.ASN, r.Org)
+		_, _ = gw.Write([]byte(line))
 	}
 	must(gw.Close())
 
@@ -125,7 +186,7 @@ func must(err error) {
 	}
 }
 
-func fetchWithRetry(client *http.Client, name, url string) []rir.Record {
+func fetchRIRWithRetry(client *http.Client, name, url string) []rir.Record {
 	const maxRetries = 5
 	var lastErr error
 
@@ -144,7 +205,6 @@ func fetchWithRetry(client *http.Client, name, url string) []rir.Record {
 			continue
 		}
 
-		// Download entire body first to avoid connection reset during streaming parse
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
