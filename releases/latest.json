@@ -1,0 +1,27 @@
+{
+  "name": "deflect-geoip",
+  "version": "2026-11-16",
+  "generated_at": "2026-11-16T11:31:38.95449017Z",
+  "sources": [
+    "afrinic-delegated",
+    "apnic-delegated",
+    "arin-delegated",
+    "lacnic-delegated",
+    "ripe-delegated",
+    "iptoasn"
+  ],
+  "artifacts": [
+    {
+      "type": "countrydb.csv.gz",
+      "path": "releases/2026-11-16/countrydb.csv.gz",
+      "sha256": "af06603d88356df7ee5d8a1c64d10c002d26d187333d4c68fd446947dc052a67",
+      "bytes": 1155079
+    },
+    {
+      "type": "asndb.csv.gz",
+      "path": "releases/2026-11-16/asndb.csv.gz",
+      "sha256": "41fddc6bd7410d6ec707395c6f589ca53dfe2eccb3d196d580c01b762aabeaba",
+      "bytes": 9709345
+    }
+  ]
+}
